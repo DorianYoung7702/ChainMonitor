@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS dex_transactions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) PARTITION BY RANGE (timestamp);
 
--- 创建分区表（2025年1-3月）
+-- 创建分区表（2025年全年）
 CREATE TABLE dex_transactions_2025_01 PARTITION OF dex_transactions
     FOR VALUES FROM (1704067200) TO (1706745600); -- 2025-01-01 to 2025-02-01
 
@@ -109,6 +109,33 @@ CREATE TABLE dex_transactions_2025_02 PARTITION OF dex_transactions
 
 CREATE TABLE dex_transactions_2025_03 PARTITION OF dex_transactions
     FOR VALUES FROM (1709251200) TO (1711929600); -- 2025-03-01 to 2025-04-01
+
+CREATE TABLE dex_transactions_2025_04 PARTITION OF dex_transactions
+    FOR VALUES FROM (1711929600) TO (1714521600); -- 2025-04-01 to 2025-05-01
+
+CREATE TABLE dex_transactions_2025_05 PARTITION OF dex_transactions
+    FOR VALUES FROM (1714521600) TO (1717200000); -- 2025-05-01 to 2025-06-01
+
+CREATE TABLE dex_transactions_2025_06 PARTITION OF dex_transactions
+    FOR VALUES FROM (1717200000) TO (1719792000); -- 2025-06-01 to 2025-07-01
+
+CREATE TABLE dex_transactions_2025_07 PARTITION OF dex_transactions
+    FOR VALUES FROM (1719792000) TO (1722470400); -- 2025-07-01 to 2025-08-01
+
+CREATE TABLE dex_transactions_2025_08 PARTITION OF dex_transactions
+    FOR VALUES FROM (1722470400) TO (1725148800); -- 2025-08-01 to 2025-09-01
+
+CREATE TABLE dex_transactions_2025_09 PARTITION OF dex_transactions
+    FOR VALUES FROM (1725148800) TO (1727740800); -- 2025-09-01 to 2025-10-01
+
+CREATE TABLE dex_transactions_2025_10 PARTITION OF dex_transactions
+    FOR VALUES FROM (1727740800) TO (1730419200); -- 2025-10-01 to 2025-11-01
+
+CREATE TABLE dex_transactions_2025_11 PARTITION OF dex_transactions
+    FOR VALUES FROM (1730419200) TO (1733011200); -- 2025-11-01 to 2025-12-01
+
+CREATE TABLE dex_transactions_2025_12 PARTITION OF dex_transactions
+    FOR VALUES FROM (1733011200) TO (1735689600); -- 2025-12-01 to 2026-01-01
 
 CREATE INDEX idx_dex_tx_market_time ON dex_transactions(market_id, timestamp DESC);
 CREATE INDEX idx_dex_tx_hash ON dex_transactions(tx_hash);
