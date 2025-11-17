@@ -14,8 +14,8 @@
   {
     "label": "BINANCE_HOT_WALLET",
     "type": "exchange",
-    "address": "0xYourCexHotWalletHere",
-    "description": "Example exchange hot wallet on Ethereum"
+    "address": "0xC94eBB328aC25b95DB0E0AA968371885Fa516215",
+    "description": "Exchange hot wallet on Ethereum"
   },
   {
     "label": "WHALE_ETH_1",
