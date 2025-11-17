@@ -22,7 +22,8 @@
     "zustand": "^4.4.7",
     "date-fns": "^3.0.0",
     "clsx": "^2.1.0",
-    "lucide-react": "^0.303.0"
+    "lucide-react": "^0.303.0",
+    "axios": "^1.6.5"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
