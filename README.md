@@ -60,7 +60,33 @@ ChainMonitor/
 
 ## 🚀 快速开始
 
-### 1. 部署智能合约
+### ⚡ 5分钟快速测试（推荐）
+
+使用Docker一键启动所有服务，无需安装PostgreSQL：
+
+```bash
+# 1. 配置环境变量
+cp .env.docker .env
+
+# 2. 一键启动所有服务
+./quick-start.sh
+```
+
+这将自动：
+- ✅ 启动PostgreSQL Docker容器
+- ✅ 创建数据库schema
+- ✅ 生成测试数据
+- ✅ 启动前端开发服务器
+
+然后访问 **http://localhost:3000** 查看效果！
+
+详细测试流程见：[TESTING_GUIDE.md](TESTING_GUIDE.md)
+
+---
+
+### 📦 完整部署流程
+
+#### 1. 部署智能合约
 
 ```bash
 # 安装依赖
@@ -78,12 +104,23 @@ npm run deploy:sepolia
 # 记录输出的合约地址
 ```
 
-### 2. 设置数据库
+#### 2. 设置数据库
+
+**方式A: 使用Docker（推荐）**
 
 ```bash
 cd database
 
-# 一键安装（推荐）
+# Docker一键安装
+./setup-docker.sh
+```
+
+**方式B: 使用本地PostgreSQL**
+
+```bash
+cd database
+
+# 本地PostgreSQL安装
 ./setup.sh
 
 # 或手动安装
