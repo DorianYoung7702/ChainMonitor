@@ -3,7 +3,7 @@
 import os
 import time
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 from dotenv import load_dotenv
 from web3 import Web3
@@ -19,6 +19,7 @@ load_dotenv()
 # 读取 markets.json 配置
 # ----------------------------------------------------------------------
 
+
 SCRIPT_DIR = os.path.dirname(__file__)
 MARKETS_PATH = os.path.join(SCRIPT_DIR, "markets.json")
 
@@ -29,16 +30,6 @@ def load_markets() -> List[Dict[str, Any]]:
 
 
 def get_default_dex_market(markets: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    优先选择 Ethereum 主网的 DEX 池子：
-    type == "dex_pool" 且 network == "mainnet"
-    如果没有 network 字段，就退化为第一个 dex_pool
-    """
-    # 先找 network=mainnet
-    for m in markets:
-        if m.get("type") == "dex_pool" and m.get("network", "mainnet") == "mainnet":
-            return m
-    # 退化为任意 dex_pool
     for m in markets:
         if m.get("type") == "dex_pool":
             return m
@@ -48,11 +39,6 @@ def get_default_dex_market(markets: List[Dict[str, Any]]) -> Dict[str, Any]:
 def calc_market_id(label: str) -> bytes:
     """和部署脚本保持一致：keccak(label)"""
     return Web3.keccak(text=label)
-
-
-def is_valid_eth_address(addr: str) -> bool:
-    """简单过滤掉占位符，确保是 0x 开头的 42 位地址"""
-    return isinstance(addr, str) and addr.startswith("0x") and len(addr) == 42
 
 
 # ----------------------------------------------------------------------
@@ -179,32 +165,13 @@ def monitor_loop(
     markets = load_markets()
     dex_market = get_default_dex_market(markets)
 
-    pair_address: str = dex_market.get("pairAddress") or dex_market.get("address")
+    pair_address: str = dex_market["pairAddress"]
     label: str = dex_market["label"]
     market_id: bytes = calc_market_id(label)
 
-    # ===== 从 markets.json 中整理巨鲸地址 & 交易所地址列表 =====
-    whales: List[str] = []
-    cex_addresses: List[str] = []
-
-    for m in markets:
-        # 只看 Ethereum 主网
-        if m.get("network", "mainnet") != "mainnet":
-            continue
-
-        addr = m.get("address")
-        if not is_valid_eth_address(addr or ""):
-            continue
-
-        t = m.get("type")
-
-        # ETH 巨鲸：whale_eth / whale
-        if t in ("whale_eth", "whale"):
-            whales.append(addr)
-
-        # 交易所热钱包：exchange_eth / exchange
-        if t in ("exchange_eth", "exchange"):
-            cex_addresses.append(addr)
+    # 从 markets.json 中整理巨鲸地址 & 交易所地址列表
+    whales: List[str] = [m["address"] for m in markets if m.get("type") == "whale"]
+    cex_addresses: List[str] = [m["address"] for m in markets if m.get("type") == "exchange"]
 
     print("🚀 启动监控：")
     print(f"  监控市场 label      : {label}")
@@ -218,7 +185,7 @@ def monitor_loop(
     while True:
         print("\n=== 开始新一轮监控 ===")
 
-        # 1) DEX 交易数据（主网真实数据）
+        # 1) DEX 交易数据
         trades = fetch_recent_swaps(
             pair_address=pair_address,
             blocks_back=blocks_back,
@@ -229,19 +196,18 @@ def monitor_loop(
         dex_volume = sum(int(t["amount_in"]) for t in trades)
         dex_trades = len(trades)
 
-        # 2) 池子流动性估计（主网）
+        # 2) 池子流动性估计
         pool_liquidity = estimate_pool_liquidity(pair_address, network="mainnet")
 
-        # 3) 巨鲸行为（基于 ETH 转账 + 池子）
+        # 3) 巨鲸行为
         whale_sell_total, whale_count_selling = fetch_whale_metrics(
             whales=whales,
             cex_addresses=cex_addresses,
-            pair_address=pair_address,
             blocks_back=blocks_back,
             network="mainnet",
         )
 
-        # 4) 交易所净流入（只统计 ETH 行为）
+        # 4) 交易所净流入
         cex_net_inflow = fetch_cex_net_inflow(
             cex_addresses=cex_addresses,
             blocks_back=blocks_back,

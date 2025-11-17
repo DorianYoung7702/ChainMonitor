@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 全局样式 */
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-bg-dark text-text-primary antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* 滚动条样式 */
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-bg-surface;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-border-light;
+  }
+}
+
+/* 自定义组件样式 */
+@layer components {
+  .card {
+    @apply bg-bg-surface border border-border rounded-xl p-6 shadow-lg transition-all duration-200;
+  }
+
+  .card:hover {
+    @apply border-border-light shadow-xl transform -translate-y-0.5;
+  }
+
+  .btn-primary {
+    @apply bg-primary hover:bg-primary-hover text-white font-medium px-6 py-2.5 rounded-lg transition-all duration-200 shadow-md;
+  }
+
+  .btn-primary:hover {
+    @apply shadow-lg transform scale-105;
+  }
+
+  .btn-secondary {
+    @apply bg-transparent border border-border hover:border-border-light text-text-secondary hover:text-text-primary px-6 py-2.5 rounded-lg transition-all duration-200;
+  }
+
+  .input {
+    @apply bg-bg-light border border-border rounded-lg px-4 py-2.5 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-medium;
+  }
+
+  .risk-badge-0 {
+    @apply bg-risk-0/10 text-risk-0 border border-risk-0/20;
+  }
+
+  .risk-badge-1 {
+    @apply bg-risk-1/10 text-risk-1 border border-risk-1/20;
+  }
+
+  .risk-badge-2 {
+    @apply bg-risk-2/10 text-risk-2 border border-risk-2/20;
+  }
+
+  .risk-badge-3 {
+    @apply bg-risk-3/10 text-risk-3 border border-risk-3/20;
+  }
+
+  .gradient-border {
+    @apply relative;
+  }
+
+  .gradient-border::before {
+    content: '';
+    @apply absolute inset-0 rounded-xl;
+    padding: 2px;
+    background: linear-gradient(45deg, #3B82F6, #8B5CF6);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+}
+
+/* 工具类 */
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-purple-500;
+  }
+
+  .animate-glow {
+    animation: glow 2s ease-in-out infinite alternate;
+  }
+
+  @keyframes glow {
+    from {
+      box-shadow: 0 0 10px -10px #3B82F6;
+    }
+    to {
+      box-shadow: 0 0 20px -5px #3B82F6;
+    }
+  }
+}
