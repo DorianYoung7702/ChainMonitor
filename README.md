@@ -19,7 +19,7 @@ npx hardhat compile
 
 2. 配置 `.env`（参考 `.env.example`），填好 `SEPOLIA_RPC_URL`、`PRIVATE_KEY` 等。
 
-3. 部署到 Sepolia：
+3. 部署到 Sepolia
 
 ```bash
 npm run deploy:sepolia
