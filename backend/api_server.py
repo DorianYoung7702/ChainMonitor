@@ -1,1186 +1,68 @@
 # backend/api_server.py
 
+import os
 import sqlite3
 from pathlib import Path
 from flask import Flask, jsonify, request, Response
 
-from db import MonitorDatabase
+from dotenv import load_dotenv
+from web3 import Web3
 
+from db import MonitorDatabase
+from config import load_risk_monitor_contract
+
+# -------------------------------------------------------------------
+# 基础路径 / DB / 前端路径
+# -------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "defi_monitor.db"
 
+# 假设 frontend_simple 和 backend 是同级目录
+FRONTEND_DIR = BASE_DIR.parent / "frontend_simple"
+INDEX_PATH = FRONTEND_DIR / "index.html"
+
 app = Flask(__name__)
 
-# ==================== 内嵌前端 HTML ====================
+# -------------------------------------------------------------------
+# 链上合约配置：读取真实 level
+# -------------------------------------------------------------------
+load_dotenv()
 
-INDEX_HTML = """
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <title>DeFi Risk Sentinel · 链上风险仪表盘</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+# 和 monitor.py 使用同一个网络（例如 sepolia）
+RISK_NETWORK = os.getenv("RISK_NETWORK", "sepolia")
+# 和 monitor.py / 部署脚本使用同一个 label
+MARKET_LABEL = os.getenv("MARKET_LABEL", "UNISWAP_USDC_WETH")
 
-  <link
-    rel="preconnect"
-    href="https://fonts.googleapis.com"
-  />
-  <link
-    rel="preconnect"
-    href="https://fonts.gstatic.com"
-    crossorigin
-  />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
-    rel="stylesheet"
-  />
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css"
-  />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <style>
-    :root {
-      --bg-app: #020617;
-      --bg-surface: #050816;
-      --bg-soft: #050816;
-      --border-subtle: rgba(148, 163, 184, 0.25);
-      --border-strong: rgba(15, 23, 42, 0.85);
+def calc_market_id(label: str) -> bytes:
+    """与部署脚本 / monitor.py 保持一致：keccak(text)"""
+    return Web3.keccak(text=label)
 
-      --accent: #a855f7;
-      --accent-soft: rgba(168, 85, 247, 0.18);
 
-      --text-main: #e5e7eb;
-      --text-muted: #9ca3af;
-      --text-subtle: #6b7280;
+# bytes32 原始值（合约调用用这个）
+MARKET_ID_BYTES = calc_market_id(MARKET_LABEL)
+# 方便前端展示用的 hex 字符串
+MARKET_ID_HEX = Web3.to_hex(MARKET_ID_BYTES)
 
-      --risk-0: #22c55e;
-      --risk-1: #eab308;
-      --risk-2: #f97316;
-      --risk-3: #ef4444;
-    }
+# 初始化 Web3 + 风险监控合约（只读调用）
+w3, risk_contract = load_risk_monitor_contract(RISK_NETWORK)
 
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
 
-    body {
-      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-      background: radial-gradient(circle at top, #020617 0, #020617 40%, #020617 100%);
-      color: var(--text-main);
-      min-height: 100vh;
-      display: flex;
-    }
-
-    a {
-      color: inherit;
-      text-decoration: none;
-    }
-
-    /* ——— 整体布局：左侧窄导航 + 右侧主内容 ——— */
-
-    .app-shell {
-      display: grid;
-      grid-template-columns: 220px minmax(0, 1fr);
-      width: 100%;
-      min-height: 100vh;
-    }
-
-    @media (max-width: 900px) {
-      .app-shell {
-        grid-template-columns: 70px minmax(0, 1fr);
-      }
-    }
-
-    .sidebar {
-      border-right: 1px solid var(--border-strong);
-      background: radial-gradient(circle at top, #020617, #020617 55%, #020617);
-      display: flex;
-      flex-direction: column;
-      padding: 16px 14px;
-      gap: 18px;
-    }
-
-    .sidebar-logo {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 6px 8px;
-    }
-
-    .sidebar-logo-mark {
-      width: 30px;
-      height: 30px;
-      border-radius: 999px;
-      background: radial-gradient(circle at 30% 20%, #38bdf8, #0f172a);
-      border: 1px solid rgba(248, 250, 252, 0.7);
-      box-shadow:
-        0 0 16px rgba(168, 85, 247, 0.6),
-        0 0 0 1px rgba(15, 23, 42, 0.98);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      font-weight: 600;
-      color: #f9fafb;
-    }
-
-    .sidebar-logo-text {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .sidebar-logo-title {
-      font-size: 13px;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: #e5e7eb;
-    }
-
-    .sidebar-logo-sub {
-      font-size: 11px;
-      color: var(--text-subtle);
-    }
-
-    @media (max-width: 900px) {
-      .sidebar-logo-text {
-        display: none;
-      }
-    }
-
-    .sidebar-nav {
-      margin-top: 4px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      font-size: 12px;
-    }
-
-    .nav-section-label {
-      text-transform: uppercase;
-      letter-spacing: 0.18em;
-      font-size: 10px;
-      color: var(--text-subtle);
-      padding: 0 6px;
-    }
-
-    .nav-list {
-      list-style: none;
-      margin-top: 4px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .nav-item {
-      border-radius: 999px;
-      padding: 6px 8px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-      color: var(--text-muted);
-      border: 1px solid transparent;
-      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease,
-        transform 0.1s ease;
-    }
-
-    .nav-item i {
-      font-size: 14px;
-      width: 18px;
-      display: flex;
-      justify-content: center;
-    }
-
-    .nav-item span {
-      white-space: nowrap;
-    }
-
-    .nav-item:hover {
-      background: rgba(15, 23, 42, 0.95);
-      border-color: var(--border-subtle);
-      color: #e5e7eb;
-      transform: translateY(-1px);
-    }
-
-    .nav-item.active {
-      background: radial-gradient(circle at top left, var(--accent-soft), transparent),
-        linear-gradient(145deg, rgba(15, 23, 42, 0.97), rgba(15, 23, 42, 0.98));
-      border-color: rgba(248, 250, 252, 0.06);
-      color: #fefce8;
-    }
-
-    @media (max-width: 900px) {
-      .nav-item span {
-        display: none;
-      }
-    }
-
-    .sidebar-footer {
-      margin-top: auto;
-      padding: 4px 4px 0;
-      font-size: 11px;
-      color: var(--text-subtle);
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .sidebar-footer-pill {
-      border-radius: 999px;
-      padding: 4px 8px;
-      border: 1px solid var(--border-subtle);
-      background: rgba(15, 23, 42, 0.95);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 10px;
-      color: var(--text-muted);
-    }
-
-    @media (max-width: 900px) {
-      .sidebar-footer-text {
-        display: none;
-      }
-    }
-
-    /* ——— 右侧主内容区域：头部 + 内容区 ——— */
-
-    .main {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      min-height: 100vh;
-    }
-
-    .topbar {
-      height: 56px;
-      border-bottom: 1px solid var(--border-strong);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 20px;
-      background: radial-gradient(circle at top, rgba(15, 23, 42, 0.95), #020617);
-    }
-
-    .topbar-left {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .topbar-title {
-      font-size: 13px;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: rgba(209, 213, 219, 0.96);
-    }
-
-    .topbar-subtitle {
-      font-size: 11px;
-      color: var(--text-subtle);
-    }
-
-    .topbar-right {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 11px;
-    }
-
-    .status-pill {
-      border-radius: 999px;
-      padding: 4px 10px;
-      border: 1px solid rgba(148, 163, 184, 0.4);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      background: rgba(15, 23, 42, 0.9);
-      color: var(--text-muted);
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: #22c55e;
-      box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
-    }
-
-    /* ——— 内容区 ——— */
-
-    .content {
-      flex: 1;
-      padding: 18px 18px 22px;
-      display: grid;
-      grid-template-columns: minmax(0, 2.1fr) minmax(0, 1.4fr);
-      gap: 18px;
-    }
-
-    @media (max-width: 1024px) {
-      .content {
-        grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.2fr);
-      }
-    }
-
-    @media (max-width: 900px) {
-      .content {
-        grid-template-columns: minmax(0, 1fr);
-      }
-    }
-
-    .panel {
-      background: radial-gradient(circle at top left, rgba(15, 23, 42, 0.9), #020617);
-      border-radius: 22px;
-      border: 1px solid rgba(15, 23, 42, 0.95);
-      box-shadow:
-        0 24px 60px rgba(0, 0, 0, 0.85),
-        0 0 0 1px rgba(15, 23, 42, 0.95);
-      padding: 16px 18px 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      min-height: 0;
-    }
-
-    .panel-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 10px;
-    }
-
-    .panel-title {
-      font-size: 12px;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-    }
-
-    .panel-subtitle {
-      font-size: 11px;
-      color: var(--text-subtle);
-      margin-top: 2px;
-    }
-
-    .panel-header-right {
-      font-size: 11px;
-      color: var(--text-subtle);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .badge-soft {
-      padding: 2px 8px;
-      border-radius: 999px;
-      border: 1px solid rgba(148, 163, 184, 0.4);
-      font-size: 10px;
-      background: rgba(15, 23, 42, 0.95);
-      color: rgba(209, 213, 219, 0.96);
-    }
-
-    /* ——— 左侧主 Panel：🚥 风险灯 + 图表 + 指标 ——— */
-
-    .risk-layout {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1.3fr);
-      gap: 16px;
-      align-items: center;
-      margin-top: 4px;
-    }
-
-    @media (max-width: 640px) {
-      .risk-layout {
-        grid-template-columns: minmax(0, 1fr);
-        align-items: flex-start;
-      }
-    }
-
-    .risk-orb-wrapper {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    /* 新的 🚥 风格指示灯 */
-    .risk-traffic {
-      min-width: 190px;
-      height: 64px;
-      border-radius: 999px;
-      border: 1px solid rgba(31, 41, 55, 0.95);
-      background: rgba(15, 23, 42, 0.96);
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 14px;
-      box-shadow:
-        0 18px 50px rgba(0, 0, 0, 0.95),
-        0 0 0 1px rgba(15, 23, 42, 0.95);
-    }
-
-    .risk-emoji {
-      font-size: 30px;
-      filter: drop-shadow(0 0 6px rgba(248, 250, 252, 0.4));
-    }
-
-    .risk-traffic-text {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .risk-traffic-level {
-      font-size: 13px;
-      font-weight: 600;
-      color: rgba(249, 250, 251, 0.98);
-    }
-
-    .risk-traffic-label {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.18em;
-      color: var(--text-subtle);
-    }
-
-    .risk-meta {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      font-size: 12px;
-    }
-
-    .risk-head-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-    }
-
-    .risk-pill-main {
-      font-size: 11px;
-      padding: 2px 9px;
-      border-radius: 999px;
-      border: 1px solid rgba(148, 163, 184, 0.5);
-      background: rgba(15, 23, 42, 0.9);
-      color: var(--text-muted);
-    }
-
-    .risk-meta-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      font-size: 11px;
-      color: var(--text-muted);
-    }
-
-    .risk-meta-row span {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-
-    .risk-meta-row code {
-      font-size: 10px;
-      padding: 1px 4px;
-      border-radius: 6px;
-      background: rgba(15, 23, 42, 0.96);
-      border: 1px solid rgba(31, 41, 55, 0.9);
-      color: rgba(209, 213, 219, 0.9);
-    }
-
-    .chart-card {
-      margin-top: 8px;
-      background: linear-gradient(150deg, #020617, #020617);
-      border-radius: 16px;
-      border: 1px solid rgba(31, 41, 55, 0.9);
-      padding: 10px 12px 12px;
-    }
-
-    .chart-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 11px;
-      color: var(--text-muted);
-      margin-bottom: 6px;
-    }
-
-    .chart-toolbar span:first-child {
-      color: rgba(209, 213, 219, 0.95);
-      font-weight: 500;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .chart-toolbar i {
-      font-size: 14px;
-    }
-
-    .stat-grid {
-      margin-top: 10px;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-    }
-
-    @media (max-width: 900px) {
-      .stat-grid {
-        grid-template-columns: minmax(0, 1fr);
-      }
-    }
-
-    .stat-card {
-      border-radius: 14px;
-      border: 1px solid rgba(31, 41, 55, 0.9);
-      background: radial-gradient(circle at top left, #020617, #020617);
-      padding: 9px 10px 11px;
-      font-size: 11px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .stat-label {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      color: rgba(148, 163, 184, 0.94);
-    }
-
-    .stat-label i {
-      font-size: 13px;
-    }
-
-    .stat-value {
-      font-size: 12px;
-      font-weight: 500;
-      color: rgba(229, 231, 235, 0.98);
-    }
-
-    .stat-chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      margin-top: 2px;
-    }
-
-    .stat-chip {
-      font-size: 10px;
-      padding: 2px 7px;
-      border-radius: 999px;
-      border: 1px solid rgba(31, 41, 55, 0.95);
-      background: rgba(15, 23, 42, 0.96);
-      color: rgba(156, 163, 175, 0.96);
-    }
-
-    .stat-chip.highlight {
-      border-color: rgba(34, 197, 94, 0.85);
-      color: #bbf7d0;
-    }
-
-    .stat-chip.warn {
-      border-color: rgba(234, 179, 8, 0.9);
-      color: #fef3c7;
-    }
-
-    /* ——— 右侧 Panel：因子结构 + 合约联动说明 ——— */
-
-    .factor-section {
-      margin-top: 4px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      font-size: 11px;
-      color: var(--text-muted);
-    }
-
-    .factor-group {
-      border-radius: 16px;
-      border: 1px dashed rgba(148, 163, 184, 0.4);
-      background: rgba(15, 23, 42, 0.9);
-      padding: 10px 12px 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .factor-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    @media (max-width: 640px) {
-      .factor-row {
-        flex-direction: column;
-      }
-    }
-
-    .factor-col {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .factor-label {
-      font-size: 11px;
-      color: rgba(209, 213, 219, 0.97);
-    }
-
-    .factor-tag {
-      font-size: 10px;
-      padding: 2px 7px;
-      border-radius: 999px;
-      border: 1px solid rgba(148, 163, 184, 0.45);
-      background: rgba(15, 23, 42, 0.96);
-      color: rgba(203, 213, 225, 0.96);
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-
-    .factor-desc {
-      line-height: 1.7;
-    }
-
-  </style>
-</head>
-<body>
-  <div class="app-shell">
-    <!-- 左侧导航栏 -->
-    <aside class="sidebar">
-      <div class="sidebar-logo">
-        <div class="sidebar-logo-mark">DS</div>
-        <div class="sidebar-logo-text">
-          <div class="sidebar-logo-title">LingNan University</div>
-          <div class="sidebar-logo-sub">On-chain Market Monitor</div>
-        </div>
-      </div>
-
-      <nav class="sidebar-nav">
-        <div class="nav-section-label">OVERVIEW</div>
-        <ul class="nav-list">
-          <li class="nav-item active">
-            <i class="ph-bold ph-gauge"></i>
-            <span>仪表盘 Dashboard</span>
-          </li>
-        </ul>
-
-        <div class="nav-section-label">MARKETS</div>
-        <ul class="nav-list">
-          <li class="nav-item">
-            <i class="ph-bold ph-swap"></i>
-            <span>Uniswap V2 · USDC / WETH</span>
-          </li>
-        </ul>
-
-        <div class="nav-section-label">ALERTS</div>
-        <ul class="nav-list">
-          <li class="nav-item">
-            <i class="ph-bold ph-bell-ringing"></i>
-            <span>风险阈值与告警逻辑</span>
-          </li>
-        </ul>
-      </nav>
-
-      <div class="sidebar-footer">
-        <div class="sidebar-footer-pill">
-          <div class="status-dot" id="status-dot"></div>
-          <div class="sidebar-footer-text">
-            后端：Python 监控脚本 · Hardhat 部署合约
-          </div>
-        </div>
-      </div>
-    </aside>
-
-    <!-- 右侧主区域 -->
-    <div class="main">
-      <header class="topbar">
-        <div class="topbar-left">
-          <div class="topbar-title">CHAIN RISK DASHBOARD</div>
-          <div class="topbar-subtitle">
-            基于以太坊主网真实数据 · Uniswap 池子 + 巨鲸行为 + CEX 资金流
-          </div>
-        </div>
-        <div class="topbar-right">
-          <div class="status-pill">
-            <i class="ph-bold ph-activity"></i>
-            <span id="api-status">API 状态：连接中…</span>
-          </div>
-        </div>
-      </header>
-
-      <main class="content">
-        <!-- 左侧：风险总览 + 图表 + 指标 -->
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <div class="panel-title">MARKET RISK OVERVIEW</div>
-              <div class="panel-subtitle">当前监控市场：UNISWAP_USDC_WETH</div>
-            </div>
-            <div class="panel-header-right">
-              <span>风险等级：0 正常 · 3 高危</span>
-            </div>
-          </div>
-
-          <div class="risk-layout">
-            <div class="risk-orb-wrapper">
-              <div class="risk-traffic" id="risk-light">
-                <div class="risk-emoji" id="risk-emoji">🚥</div>
-                <div class="risk-traffic-text">
-                  <div class="risk-traffic-level" id="risk-level-text">Level 0</div>
-                  <div class="risk-traffic-label" id="risk-label">NORMAL</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="risk-meta">
-              <div class="risk-head-row">
-                <span>当前风险等级：</span>
-                <span id="risk-level-desc">正常 · 背景波动</span>
-                <span class="risk-pill-main" id="risk-pill">
-                  阈值示例：≥ 2 触发策略降仓
-                </span>
-              </div>
-              <div class="risk-meta-row">
-                <span><i class="ph-bold ph-swap"></i> 池子：USDC / WETH (V2)</span>
-                <span><i class="ph-bold ph-cube"></i> MarketId:
-                  <code id="market-id-short">—</code>
-                </span>
-              </div>
-              <div class="risk-meta-row">
-                <span><i class="ph-bold ph-clock"></i> 最近更新：
-                  <span id="last-update">—</span>
-                </span>
-                <span><i class="ph-bold ph-database"></i> 记录条数：
-                  <span id="record-count">—</span>
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div class="chart-card">
-            <div class="chart-toolbar">
-              <div>
-                <span>
-                  <i class="ph-bold ph-wave-square"></i>
-                  风险等级时间序列
-                </span>
-                <span>最近 100 次监控点</span>
-              </div>
-              <div class="badge-soft" id="source-badge">source: multi_factor</div>
-            </div>
-            <div style="height: 130px;">
-              <canvas id="risk-chart"></canvas>
-            </div>
-          </div>
-
-          <div class="stat-grid">
-            <div class="stat-card">
-              <div class="stat-label">
-                <i class="ph-bold ph-arrows-left-right"></i>
-                DEX 活跃度
-              </div>
-              <div class="stat-value" id="dex-volume">—</div>
-              <div class="stat-chips">
-                <div class="stat-chip highlight" id="dex-trades">— 笔 Swap</div>
-                <div class="stat-chip">成交量为池子流动性的相对比例仅在后端计算</div>
-              </div>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-label">
-                <i class="ph-bold ph-whatsapp-logo"></i>
-                巨鲸 & CEX 行为
-              </div>
-              <div class="stat-value" id="whale-summary">—</div>
-              <div class="stat-chips">
-                <div class="stat-chip warn" id="whale-sell">巨鲸卖出：—</div>
-                <div class="stat-chip" id="cex-flow">CEX 净流入：—</div>
-              </div>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-label">
-                <i class="ph-bold ph-activity"></i>
-                策略提示
-              </div>
-              <div class="stat-value" id="hint-text">
-                风险偏低，可以以观察为主，正常仓位参与。
-              </div>
-              <div class="stat-chips">
-                <div class="stat-chip" id="hint-chip-1">状态：观察阶段</div>
-                <div class="stat-chip" id="hint-chip-2">建议：维持常规风险暴露</div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- 右侧：因子拆解 + 合约联动说明 -->
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <div class="panel-title">SIGNAL COMPOSITION</div>
-              <div class="panel-subtitle">多因子风险信号拆解与合约交互方式</div>
-            </div>
-          </div>
-
-          <div class="factor-section">
-            <div class="factor-group">
-              <div class="factor-row">
-                <div class="factor-col">
-                  <div class="factor-label">链上数据输入</div>
-                  <div class="factor-tag">
-                    <i class="ph-bold ph-swap"></i>
-                    Uniswap V2 · Swap 事件
-                  </div>
-                  <div class="factor-tag">
-                    <i class="ph-bold ph-database"></i>
-                    getReserves() · 池子流动性
-                  </div>
-                  <div class="factor-tag">
-                    <i class="ph-bold ph-link-simple"></i>
-                    Etherscan API · 巨鲸 / 交易所地址
-                  </div>
-                </div>
-                <div class="factor-col" style="text-align: right;">
-                  <div class="factor-label">合约侧接口</div>
-                  <div class="factor-tag">
-                    RiskMonitor.updateRisk(marketId, level)
-                  </div>
-                  <div class="factor-tag">
-                    keeper = Python 监控脚本
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="factor-group">
-              <div class="factor-row">
-                <div class="factor-col">
-                  <div class="factor-label">风险因子构成</div>
-                  <div class="factor-tag">DEX 成交量与笔数</div>
-                  <div class="factor-tag">巨鲸卖出规模 / 地址数量</div>
-                  <div class="factor-tag">CEX 热钱包净流入主链 ETH</div>
-                </div>
-                <div class="factor-col" style="text-align: right;">
-                  <div class="factor-label">风险等级区间</div>
-                  <div class="factor-tag">L0 正常 · L1 注意</div>
-                  <div class="factor-tag">L2 警告 · L3 高危</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="factor-group">
-              <div class="factor-label" style="margin-bottom: 4px;">
-                用户 & 策略的应用场景
-              </div>
-              <ul class="factor-desc">
-                <li>风控：当等级 ≥ 2 时，自动降低杠杆或移除部分流动性。</li>
-                <li>做市：根据风险灯颜色动态调整报价宽度与库存目标。</li>
-                <li>研究：叠加情绪 / 宏观等外部因子，构建更丰富的多维风险面板。</li>
-              </ul>
-            </div>
-          </div>
-        </section>
-      </main>
-    </div>
-  </div>
-
-  <script>
-    const apiStatusEl = document.getElementById("api-status");
-    const statusDotEl = document.getElementById("status-dot");
-
-    const riskLevelTextEl = document.getElementById("risk-level-text");
-    const riskLabelEl = document.getElementById("risk-label");
-    const riskLightEl = document.getElementById("risk-light");
-    const riskPillEl = document.getElementById("risk-pill");
-    const riskLevelDescEl = document.getElementById("risk-level-desc");
-    const riskEmojiEl = document.getElementById("risk-emoji");
-
-    const marketIdShortEl = document.getElementById("market-id-short");
-    const lastUpdateEl = document.getElementById("last-update");
-    const recordCountEl = document.getElementById("record-count");
-    const sourceBadgeEl = document.getElementById("source-badge");
-
-    const dexVolumeEl = document.getElementById("dex-volume");
-    const dexTradesEl = document.getElementById("dex-trades");
-    const whaleSummaryEl = document.getElementById("whale-summary");
-    const whaleSellEl = document.getElementById("whale-sell");
-    const cexFlowEl = document.getElementById("cex-flow");
-
-    const hintTextEl = document.getElementById("hint-text");
-    const hintChip1El = document.getElementById("hint-chip-1");
-    const hintChip2El = document.getElementById("hint-chip-2");
-
-    let riskChart = null;
-
-    function formatTime(t) {
-      if (!t) return "—";
-      return t.replace(" ", " · ");
-    }
-
-    function applyRiskStyle(level) {
-      let color, label, desc, emoji;
-      switch (level) {
-        case 0:
-          color = "var(--risk-0)";
-          label = "NORMAL";
-          desc = "正常 · 背景波动";
-          emoji = "🟢";
-          break;
-        case 1:
-          color = "var(--risk-1)";
-          label = "WATCH";
-          desc = "注意 · 成交活跃";
-          emoji = "🟡";
-          break;
-        case 2:
-          color = "var(--risk-2)";
-          label = "ALERT";
-          desc = "警告 · 流动性与资金流有放大波动风险";
-          emoji = "🟠";
-          break;
-        case 3:
-          color = "var(--risk-3)";
-          label = "DANGER";
-          desc = "高危 · 建议强制降仓或退出市场";
-          emoji = "🔴";
-          break;
-        default:
-          color = "var(--risk-0)";
-          label = "UNKNOWN";
-          desc = "未知";
-          emoji = "⚪️";
-      }
-
-      riskLevelTextEl.textContent = "Level " + level;
-      riskLabelEl.textContent = label;
-      riskLevelDescEl.textContent = desc;
-
-      // 🚥 只显示当前等级的颜色
-      if (riskEmojiEl) {
-        riskEmojiEl.textContent = emoji;
-      }
-
-      // 胶囊背景 & 边框颜色随风险等级变化
-      riskLightEl.style.borderColor = color;
-      riskLightEl.style.boxShadow =
-        "0 18px 50px rgba(0, 0, 0, 0.95), 0 0 16px " + color + "55";
-      riskPillEl.style.borderColor = color;
-      riskLabelEl.style.color = color;
-    }
-
-    function updateHint(level) {
-      if (level <= 0) {
-        hintTextEl.textContent =
-          "风险总体偏低，可以以监控成交与流动性为主，保持常规仓位。";
-        hintChip1El.textContent = "状态：观察阶段";
-        hintChip2El.textContent = "建议：正常仓位 / 低杠杆";
-      } else if (level === 1) {
-        hintTextEl.textContent =
-          "成交活跃度上升，建议提高对巨鲸动向与交易所资金流的关注。";
-        hintChip1El.textContent = "状态：轻度关注";
-        hintChip2El.textContent = "建议：控制风险敞口";
-      } else if (level === 2) {
-        hintTextEl.textContent =
-          "多因子信号偏紧，存在放大波动或踩踏风险，可逐步降低仓位。";
-        hintChip1El.textContent = "状态：风险偏高";
-        hintChip2El.textContent = "建议：减仓 / 降杠杆";
-      } else if (level >= 3) {
-        hintTextEl.textContent =
-          "综合指标处于高危区域，可能出现极端行情或短时严重失衡。";
-        hintChip1El.textContent = "状态：高危";
-        hintChip2El.textContent = "建议：优先保护本金";
-      }
-    }
-
-    function drawRiskChart(labels, levels) {
-      const ctx = document.getElementById("risk-chart").getContext("2d");
-      if (riskChart) riskChart.destroy();
-      riskChart = new Chart(ctx, {
-        type: "line",
-        data: {
-          labels,
-          datasets: [
-            {
-              label: "Risk Level",
-              data: levels,
-              borderColor: "rgba(249, 115, 22, 0.9)",
-              backgroundColor: "rgba(249, 115, 22, 0.16)",
-              tension: 0.35,
-              fill: true,
-              pointRadius: 2,
-              pointHoverRadius: 4,
-              borderWidth: 2,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: {
-              ticks: {
-                color: "rgba(148, 163, 184, 0.9)",
-                maxRotation: 0,
-                autoSkip: true,
-                maxTicksLimit: 5,
-              },
-              grid: { color: "rgba(31, 41, 55, 0.55)" },
-            },
-            y: {
-              ticks: {
-                color: "rgba(148, 163, 184, 0.9)",
-                stepSize: 1,
-              },
-              suggestedMin: -0.1,
-              suggestedMax: 3.3,
-              grid: {
-                color: (ctx) => {
-                  if (ctx.tick.value >= 3) return "rgba(239, 68, 68, 0.48)";
-                  if (ctx.tick.value >= 2) return "rgba(249, 115, 22, 0.45)";
-                  if (ctx.tick.value >= 1) return "rgba(234, 179, 8, 0.4)";
-                  return "rgba(31, 41, 55, 0.55)";
-                },
-                lineWidth: 1,
-              },
-            },
-          },
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: (ctx) => `风险等级: ${ctx.parsed.y}`,
-              },
-            },
-          },
-        },
-      });
-    }
-
-    function setApiStatus(ok, message) {
-      if (ok) {
-        apiStatusEl.textContent = message || "API 状态：正常";
-        apiStatusEl.style.color = "#bbf7d0";
-        statusDotEl.style.background = "#22c55e";
-        statusDotEl.style.boxShadow = "0 0 8px rgba(34, 197, 94, 0.8)";
-      } else {
-        apiStatusEl.textContent = message || "API 状态：异常（使用示例数据）";
-        apiStatusEl.style.color = "#fde68a";
-        statusDotEl.style.background = "#eab308";
-        statusDotEl.style.boxShadow = "0 0 8px rgba(234, 179, 8, 0.8)";
-      }
-    }
-
-    function useMockData() {
-      setApiStatus(false, "API 状态：请求失败，当前展示示例数据");
-
-      const mockLabels = ["T-4", "T-3", "T-2", "T-1", "T"];
-      const mockLevels = [0, 0, 1, 1, 2];
-      drawRiskChart(mockLabels, mockLevels);
-
-      applyRiskStyle(2);
-      updateHint(2);
-
-      marketIdShortEl.textContent = "mock_market";
-      lastUpdateEl.textContent = "示例时间戳";
-      recordCountEl.textContent = "mock";
-      sourceBadgeEl.textContent = "source: mock_data";
-
-      dexVolumeEl.textContent = "≈ 8.6e19（示例成交量）";
-      dexTradesEl.textContent = "≈ 300 笔 Swap（示例）";
-      whaleSummaryEl.textContent = "示例：近期未观察到明显巨鲸集中抛售。";
-      whaleSellEl.textContent = "巨鲸卖出：0（mock）";
-      cexFlowEl.textContent = "CEX 净流入：约 30 ETH（mock）";
-    }
-
-    async function loadStatus() {
-      try {
-        const resp = await fetch("/api/status");
-        if (!resp.ok) throw new Error("status not ok");
-        const data = await resp.json();
-
-        if (data.ok) {
-          const msg = `API 状态：正常 · 已记录 ${data.records || 0} 条风险监控`;
-          setApiStatus(true, msg);
-
-          recordCountEl.textContent = data.records ?? "0";
-          if (data.last) {
-            marketIdShortEl.textContent =
-              (data.last.market_id || "").slice(0, 10) + "…";
-            lastUpdateEl.textContent = formatTime(data.last.created_at);
-          }
-        } else {
-          setApiStatus(false, `API 状态：异常 · ${data.message}（使用示例数据）`);
-        }
-      } catch (e) {
-        setApiStatus(false, "API 状态：请求失败（使用示例数据）");
-      }
-    }
-
-    async function loadRisk() {
-      try {
-        const resp = await fetch("/api/risk?limit=100");
-        if (!resp.ok) throw new Error("risk not ok");
-        const data = await resp.json();
-
-        if (!data.ok || !data.items || data.items.length === 0) {
-          useMockData();
-          return;
-        }
-
-        const items = data.items;
-        const labels = items.map((r, idx) =>
-          r.created_at ? r.created_at.slice(5, 16) : `#${idx + 1}`
-        );
-        const levels = items.map((r) => r.level ?? 0);
-        drawRiskChart(labels, levels);
-
-        const last = items[items.length - 1];
-        const level = last.level ?? 0;
-        applyRiskStyle(level);
-        updateHint(level);
-
-        marketIdShortEl.textContent =
-          (last.market_id || "").slice(0, 10) + "…";
-        lastUpdateEl.textContent = formatTime(last.created_at);
-        sourceBadgeEl.textContent = `source: ${last.source || "multi_factor"}`;
-
-        dexVolumeEl.textContent =
-          "最近区间成交量与笔数已采集（详细可在后端日志与 SQLite 中查看）";
-        dexTradesEl.textContent = `最近采样点数：${items.length} 次`;
-        whaleSummaryEl.textContent =
-          "巨鲸卖出与 CEX 净流入已并入多因子风险评分。";
-        whaleSellEl.textContent = "巨鲸卖出：详见后端监控日志";
-        cexFlowEl.textContent = "CEX 净流入：详见后端监控日志";
-      } catch (e) {
-        useMockData();
-      }
-    }
-
-    window.addEventListener("load", () => {
-      loadStatus();
-      loadRisk();
-    });
-  </script>
-</body>
-</html>
-"""
-
-# ==================== 路由：前端 + API ====================
+# ==================== 路由：前端 ====================
 
 @app.route("/")
 def index():
-    return Response(INDEX_HTML, mimetype="text/html")
+    """
+    直接读取 frontend_simple/index.html 返回
+    """
+    if not INDEX_PATH.exists():
+        return Response("index.html not found", status=500)
 
+    html = INDEX_PATH.read_text(encoding="utf-8")
+    return Response(html, mimetype="text/html")
+
+
+# ==================== 路由：API ====================
 
 @app.route("/api/status")
 def api_status():
@@ -1221,6 +103,9 @@ def api_status():
 
 @app.route("/api/risk")
 def api_risk():
+    """
+    本地 SQLite 中的历史风险点，用于画时间序列图
+    """
     limit = int(request.args.get("limit", 100))
     market = request.args.get("market")
 
@@ -1233,7 +118,7 @@ def api_risk():
         base_sql += " WHERE market_id = ?"
         params.append(market)
 
-    # 关键修改：先按时间倒序取最新的 N 条
+    # 关键：先按时间倒序取最新 N 条
     base_sql += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
 
@@ -1244,8 +129,7 @@ def api_risk():
         rows = cur.fetchall()
         conn.close()
 
-        # 再在后端反转一次，让返回结果按时间正序排列，
-        # 这样图表从左到右还是时间线，最后一个就是最新一条。
+        # 再反转一次，让结果按时间正序返回，方便前端画图
         rows.reverse()
 
         data = [
@@ -1265,5 +149,45 @@ def api_risk():
             "items": []
         }), 500
 
+
+@app.route("/api/onchain_risk")
+def api_onchain_risk():
+    """
+    读取链上合约 RiskMonitor.markets[marketId] 的真实 level
+    用于驱动前端的 🚥 风险灯
+    """
+    try:
+        # struct MarketRisk { uint8 level; uint256 lastUpdate; bool exists; }
+        m = risk_contract.functions.markets(MARKET_ID_BYTES).call()
+        level = int(m[0])
+        last_update = int(m[1])
+        exists = bool(m[2])
+
+        if not exists:
+            return jsonify({
+                "ok": False,
+                "exists": False,
+                "message": "Market not registered on-chain",
+                "market_label": MARKET_LABEL,
+                "market_id": MARKET_ID_HEX,
+            }), 200
+
+        return jsonify({
+            "ok": True,
+            "exists": True,
+            "market_label": MARKET_LABEL,
+            "market_id": MARKET_ID_HEX,
+            "level": level,
+            "last_update": last_update,  # 区块时间（秒级 Unix 时间戳）
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "message": f"On-chain query failed: {e}"
+        }), 500
+
+
 if __name__ == "__main__":
+    # 默认端口 8000
     app.run(host="0.0.0.0", port=8000, debug=True)
